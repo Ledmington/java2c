@@ -2,14 +2,12 @@ cmake_minimum_required(VERSION 3.21 FATAL_ERROR) # not really checked
 project(java2c VERSION 0.1.0)
 
 enable_language(C)
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED TRUE)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE STRING "Release")
 endif()
 
-set(CMAKE_C_FLAGS "-Wall -Wextra -Werror -Wpedantic ${CMAKE_C_FLAGS}")
+set(CMAKE_C_FLAGS "-std=c99 -Wall -Wextra -Werror -Wpedantic ${CMAKE_C_FLAGS}")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")

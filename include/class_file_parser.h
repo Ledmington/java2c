@@ -6,10 +6,16 @@
 #include <string.h>	 // memcpy
 
 // Useful typedefs to be closer to the official specification
-// https://docs.oracle.com/javase/specs/jvms/se7/html/jvms-4.html
+// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html
 typedef uint8_t u1;
 typedef uint16_t u2;
 typedef uint32_t u4;
+typedef uint64_t u8;
+
+typedef int8_t i1;
+typedef int16_t i2;
+typedef int32_t i4;
+typedef int64_t i8;
 
 #ifndef J2C_PACKED
 #define J2C_PACKED __attribute((packed))
@@ -33,11 +39,14 @@ typedef enum J2C_PACKED {
 	CONSTANT_Utf8 = 1,
 	CONSTANT_MethodHandle = 15,
 	CONSTANT_MethodType = 16,
-	CONSTANT_InvokeDynamic = 18
+	CONSTANT_Dynamic = 17,
+	CONSTANT_InvokeDynamic = 18,
+	CONSTANT_Module = 19,
+	CONSTANT_Package = 20
 } cp_info_tag;
 
 typedef struct J2C_PACKED {
-	u1 tag;
+	cp_info_tag tag;
 	u1 *info;
 } cp_info;
 
@@ -59,7 +68,8 @@ typedef enum J2C_PACKED {
 	ACC_STRICT = 0x0800,
 	ACC_SYNTHETIC = 0x1000,
 	ACC_ANNOTATION = 0x2000,
-	ACC_ENUM = 0x4000
+	ACC_ENUM = 0x4000,
+	ACC_MODULE = 0x8000
 } access_flag;
 
 typedef struct J2C_PACKED {
@@ -115,7 +125,7 @@ static inline void *safemalloc(const size_t n) {
 	void *p = malloc(n);
 	if (p == NULL) {
 		error("Error: could not allocate %ld bytes\n", n);
-		return NULL;
+		exit(-1);
 	}
 	return p;
 }
@@ -127,7 +137,7 @@ static inline u1 read_u1(const u1 *J2C_RESTRICT content, const uint32_t length,
 						 uint32_t *J2C_RESTRICT idx) {
 	if (*idx >= length) {
 		error("\nError: called read_u1 with overflow\n");
-		return 0xff;
+		exit(-1);
 	}
 	const u1 x = content[*idx];
 	(*idx)++;
@@ -141,7 +151,7 @@ static inline u2 read_u2(const u1 *J2C_RESTRICT content, const uint32_t length,
 						 uint32_t *J2C_RESTRICT idx) {
 	if (*idx + 1 >= length) {
 		error("\nError: called read_u2 with overflow\n");
-		return 0xffff;
+		exit(-1);
 	}
 	const u2 x = ((u2)(content[*idx]) << 8) | (u2)(content[*idx + 1]);
 	*idx += 2;
@@ -155,7 +165,7 @@ static inline u4 read_u4(const u1 *J2C_RESTRICT content, const uint32_t length,
 						 uint32_t *J2C_RESTRICT idx) {
 	if (*idx + 3 >= length) {
 		fprintf(stderr, "\nError: called read_u4 with overflow\n");
-		return 0xffffffff;
+		exit(-1);
 	}
 	const u4 x = ((u4)(content[*idx]) << 24) | ((u4)(content[*idx + 1]) << 16) |
 				 ((u4)(content[*idx + 2]) << 8) | (u4)(content[*idx + 3]);
@@ -175,7 +185,7 @@ static inline void read_n(const u1 *J2C_RESTRICT content, const uint32_t length,
 	}
 	if (*idx + n - 1 >= length) {
 		fprintf(stderr, "\nError: called read_n with overflow\n");
-		return;
+		exit(-1);
 	}
 	memcpy(p, &content[*idx], n);
 	*idx += n;
@@ -185,84 +195,144 @@ static inline void read_n(const u1 *J2C_RESTRICT content, const uint32_t length,
 static void read_cp_info(const u1 *J2C_RESTRICT content, const uint32_t length,
 						 uint32_t *J2C_RESTRICT idx,
 						 cp_info *J2C_RESTRICT cp_entry) {
-	const u1 tag = read_u1(content, length, idx);
+	const cp_info_tag tag = read_u1(content, length, idx);
 	u1 *info = NULL;
-	u2 utf8_nbytes = 0;	 // used only for CONSTANT_Utf8
 
 	// here no interpretation/check of the bit patterns is performed
 	switch (tag) {
 		case CONSTANT_Class:
 			info = safemalloc(sizeof(u1) * 2);
 			read_n(content, length, idx, info, 2);
-			printf(" - CONSTANT_Class (0x%02X%02X)\n", info[0], info[1]);
+			printf(" - CONSTANT_Class #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
 			break;
 		case CONSTANT_String:
 			info = safemalloc(sizeof(u1) * 2);
 			read_n(content, length, idx, info, 2);
-			printf(" - CONSTANT_String (0x%02X%02X)\n", info[0], info[1]);
+			printf(" - CONSTANT_String #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
 			break;
 		case CONSTANT_MethodType:
 			info = safemalloc(sizeof(u1) * 2);
 			read_n(content, length, idx, info, 2);
-			printf(" - CONSTANT_MethodType (%d)\n", ((u2 *)info)[0]);
+			printf(" - CONSTANT_MethodType #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
 			break;
 		case CONSTANT_Fieldref:
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
 			printf(" - CONSTANT_Fieldref\n");
-			printf(" - class %d\n", ((u2 *)info)[0]);
-			printf(" - name_and_type %d\n", ((u2 *)info)[1]);
+			printf(" - class         #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
+			printf(" - name_and_type #%d\n",
+				   ((((u2)info[2]) << 8) | (u2)info[3]));
 			break;
 		case CONSTANT_Methodref:
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
 			printf(" - CONSTANT_Methodref\n");
-			printf(" - class %d\n", ((u2 *)info)[0]);
-			printf(" - name_and_type %d\n", ((u2 *)info)[1]);
+			printf(" - class         #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
+			printf(" - name_and_type #%d\n",
+				   ((((u2)info[2]) << 8) | (u2)info[3]));
 			break;
 		case CONSTANT_InterfaceMethodref:
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
 			printf(" - CONSTANT_InterfaceMethodref\n");
-			printf(" - class %d\n", ((u2 *)info)[0]);
-			printf(" - name_and_type %d\n", ((u2 *)info)[1]);
+			printf(" - class         #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
+			printf(" - name_and_type #%d\n",
+				   ((((u2)info[2]) << 8) | (u2)info[3]));
 			break;
 		case CONSTANT_Integer:
 			printf(" - CONSTANT_Integer\n");
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
+			{
+				const u4 x = (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
+							 (((u4)info[2]) << 8) | ((u4)info[3]);
+				printf(" - value: %d\n", *(i4 *)&x);
+			}
 			break;
 		case CONSTANT_Float:
 			printf(" - CONSTANT_Float\n");
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
+			{
+				const u4 x = (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
+							 (((u4)info[2]) << 8) | ((u4)info[3]);
+				printf(" - value: %f\n", *(float *)&x);
+			}
 			break;
 		case CONSTANT_NameAndType:
 			printf(" - CONSTANT_NameAndType\n");
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
+			printf(" - name       #%d\n", ((((u2)info[0]) << 8) | (u2)info[1]));
+			printf(" - descriptor #%d\n", ((((u2)info[2]) << 8) | (u2)info[3]));
 			break;
 		case CONSTANT_InvokeDynamic:
 			printf(" - CONSTANT_InvokeDynamic\n");
 			info = safemalloc(sizeof(u1) * 4);
 			read_n(content, length, idx, info, 4);
+			printf(" - bootstrap_method_attr_index #%d\n",
+				   ((((u2)info[0]) << 8) | (u2)info[1]));
+			printf(" - name_and_type_index         #%d\n",
+				   ((((u2)info[1]) << 8) | (u2)info[3]));
 			break;
 		case CONSTANT_Long:
 			printf(" - CONSTANT_Long\n");
 			info = safemalloc(sizeof(u1) * 8);
 			read_n(content, length, idx, info, 8);
+			{
+				const u8 x = (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
+							 (((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
+							 (((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
+							 (((u8)info[6]) << 8) | ((u8)info[7]);
+				printf(" - value: %ld\n", *(i8 *)&x);
+			}
 			break;
 		case CONSTANT_Double:
 			printf(" - CONSTANT_Double\n");
 			info = safemalloc(sizeof(u1) * 8);
 			read_n(content, length, idx, info, 8);
+			{
+				const u8 x = (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
+							 (((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
+							 (((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
+							 (((u8)info[6]) << 8) | ((u8)info[7]);
+				printf(" - value: %f\n", *(double *)&x);
+			}
 			break;
 		case CONSTANT_Utf8:
-			utf8_nbytes = read_u2(content, length, idx);
+			const u2 utf8_nbytes = read_u2(content, length, idx);
 			printf(" - CONSTANT_Utf8\n");
 			info = safemalloc(sizeof(u2) + sizeof(u1) * utf8_nbytes);
 			read_n(content, length, idx, info,
 				   sizeof(u2) + sizeof(u1) * utf8_nbytes);
+			printf(" - \"");
+			for (u2 i = 0; i < utf8_nbytes; i++) {
+				if (info[i] >= 0x01 && info[i] <= 0x7f) {
+					printf("%c", info[i]);
+				} else {
+					const u2 x = (((u2)info[i]) << 8) | ((u2)info[i + 1]);
+					if (x == 0x0000 || (x >= 0x0080 && x <= 0x07ff)) {
+						printf("%c", ((((u2)info[i]) & 0x1f) << 6) +
+										 (((u2)info[i + 1]) & 0x3f));
+					} else {
+						const u4 y = ((((u4)info[i])) << 16) |
+									 (((u4)info[i + 1]) << 8) |
+									 ((u4)info[i + 2]);
+						if (y >= 0x0800 && y <= 0xffff) {
+							printf("%c", ((((u4)info[i]) & 0xf) << 12) +
+											 ((((u4)info[i + 1]) & 0x3f) << 6) +
+											 (((u4)info[i + 2]) & 0x3f));
+						}
+					}
+				}
+			}
+			printf("\"\n");
 			break;
 		case CONSTANT_MethodHandle:
 			printf(" - CONSTANT_MethodHandle\n");
@@ -272,6 +342,8 @@ static void read_cp_info(const u1 *J2C_RESTRICT content, const uint32_t length,
 		default:
 			fprintf(stderr, "\nError: Unknown cp_info tag %d (0x%02X)\n", tag,
 					tag);
+			// *idx += 2;
+			exit(-1);
 			return;
 	}
 
@@ -343,7 +415,7 @@ static class_file *parse_class_file(const u1 *J2C_RESTRICT content,
 		(cp_info *)safemalloc((constant_pool_count - 1) * sizeof(cp_info));
 
 	for (u2 i = 0; i < constant_pool_count - 1; i++) {
-		printf("Constant pool entry n.%d\n", i);
+		printf("Constant pool entry #%d\n", i + 1);
 		read_cp_info(content, length, &idx, &constant_pool[i]);
 	}
 
