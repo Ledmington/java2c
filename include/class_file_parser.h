@@ -1,35 +1,11 @@
 #ifndef CLASS_FILE_PARSER_H_INCLUDED
 #define CLASS_FILE_PARSER_H_INCLUDED
 
-#include <stdarg.h>
-#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>	 // memcpy
 
-// Useful typedefs to be closer to the official specification
-// https://docs.oracle.com/javase/specs/jvms/se21/html/jvms-4.html
-typedef uint8_t u1;
-typedef uint16_t u2;
-typedef uint32_t u4;
-typedef uint64_t u8;
-
-typedef int8_t i1;
-typedef int16_t i2;
-typedef int32_t i4;
-typedef int64_t i8;
-
-// Utility union to easily read 32 bits as float
-typedef union {
-	i4 i;
-	float f;
-} int2float;
-
-// Utility union to easily read 64 bits as double
-typedef union {
-	i8 i;
-	double f;
-} long2double;
+#include "input.h"
+#include "types.h"
+#include "utils.h"
 
 #ifndef J2C_PACKED
 #define J2C_PACKED __attribute((packed))
@@ -104,6 +80,68 @@ typedef enum J2C_PACKED {
 	ACC_MODULE		 = 0x8000
 } access_flag;
 
+static const char *get_class_access_flag_name(const u2 af) {
+	if (af & ACC_PUBLIC) {
+		return "public";
+	}
+	if (af & ACC_FINAL) {
+		return "final";
+	}
+	if (af & ACC_SUPER) {
+		return "super";
+	}
+	if (af & ACC_INTERFACE) {
+		return "interface";
+	}
+	if (af & ACC_ABSTRACT) {
+		return "abstract";
+	}
+	if (af & ACC_SYNTHETIC) {
+		return "synthetic";
+	}
+	if (af & ACC_ANNOTATION) {
+		return "annotation";
+	}
+	if (af & ACC_ENUM) {
+		return "enum";
+	}
+	if (af & ACC_MODULE) {
+		return "module";
+	}
+	return "unknown";
+}
+
+static const char *get_field_access_flag_name(const u2 af) {
+	if (af & ACC_PUBLIC) {
+		return "public";
+	}
+	if (af & ACC_PRIVATE) {
+		return "private";
+	}
+	if (af & ACC_PROTECTED) {
+		return "protected";
+	}
+	if (af & ACC_STATIC) {
+		return "static";
+	}
+	if (af & ACC_FINAL) {
+		return "final";
+	}
+	if (af & ACC_VOLATILE) {
+		return "volatile";
+	}
+	if (af & ACC_TRANSIENT) {
+		return "transient";
+	}
+	if (af & ACC_SYNTHETIC) {
+		return "synthetic";
+	}
+	if (af & ACC_ENUM) {
+		return "enum";
+	}
+	return "unknown";
+}
+
 typedef struct J2C_PACKED {
 	u2 attribute_name_index;
 	u4 attribute_length;
@@ -145,83 +183,6 @@ typedef struct J2C_PACKED {
 	attribute_info *attributes;
 } class_file;
 
-static inline void error(const char *fmt, ...) {
-	fprintf(stderr, "[%s:%s:%d] ", __FILE__, __func__, __LINE__);
-	va_list args;
-	va_start(args, fmt);
-	fprintf(stderr, fmt, args);
-	va_end(args);
-}
-
-static inline void *safemalloc(const size_t n) {
-	void *p = malloc(n);
-	if (p == NULL) {
-		error("Error: could not allocate %ld bytes\n", n);
-		exit(-1);
-	}
-	return p;
-}
-
-/*
-Reads 1 unsigned byte from content and increments the idx.
-*/
-static inline u1 read_u1(const u1 *content, const uint32_t length,
-						 uint32_t *idx) {
-	if (*idx >= length) {
-		error("\nError: called read_u1 with overflow\n");
-		exit(-1);
-	}
-	const u1 x = content[*idx];
-	(*idx)++;
-	return x;
-}
-
-/*
-Reads 2 unsigned bytes from content in big-endian and increments the idx.
-*/
-static inline u2 read_u2(const u1 *content, const uint32_t length,
-						 uint32_t *idx) {
-	if (*idx + 1 >= length) {
-		error("\nError: called read_u2 with overflow\n");
-		exit(-1);
-	}
-	const u2 x = ((u2)(content[*idx]) << 8) | (u2)(content[*idx + 1]);
-	*idx += 2;
-	return x;
-}
-
-/*
-Reads 4 unsigned bytes from content in big-endian and increments the idx.
-*/
-static inline u4 read_u4(const u1 *content, const uint32_t length,
-						 uint32_t *idx) {
-	if (*idx + 3 >= length) {
-		fprintf(stderr, "\nError: called read_u4 with overflow\n");
-		exit(-1);
-	}
-	const u4 x = ((u4)(content[*idx]) << 24) | ((u4)(content[*idx + 1]) << 16) |
-				 ((u4)(content[*idx + 2]) << 8) | (u4)(content[*idx + 3]);
-	*idx += 4;
-	return x;
-}
-
-/*
-Reads N unsigned bytes from content in big-endian and increments the idx.
-*/
-static inline void read_n(const u1 *content, const uint32_t length,
-						  uint32_t *idx, void *p, const u4 n) {
-	if (n <= 0) {
-		// nothing to read
-		return;
-	}
-	if (*idx + n - 1 >= length) {
-		fprintf(stderr, "\nError: called read_n with overflow\n");
-		exit(-1);
-	}
-	memcpy(p, &content[*idx], n);
-	*idx += n;
-}
-
 // QUESTION: should this be returning void?
 static void read_constant_pool(const u1 *content, const uint32_t length,
 							   uint32_t *idx, cp_info *cp, u2 cp_count) {
@@ -233,99 +194,6 @@ static void read_constant_pool(const u1 *content, const uint32_t length,
 
 		// here no interpretation/check of the bit patterns is performed
 		switch (tag) {
-			case CONSTANT_Class:
-				info = (u1 *)safemalloc(sizeof(u1) * 2);
-				read_n(content, length, idx, info, 2);
-				printf("%-20s #%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]));
-				break;
-			case CONSTANT_String:
-				info = (u1 *)safemalloc(sizeof(u1) * 2);
-				read_n(content, length, idx, info, 2);
-				printf("%-20s #%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]));
-				break;
-			case CONSTANT_MethodType:
-				info = (u1 *)safemalloc(sizeof(u1) * 2);
-				read_n(content, length, idx, info, 2);
-				printf("%-20s #%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]));
-				break;
-			case CONSTANT_Fieldref:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]),
-					   ((((u2)info[2]) << 8) | (u2)info[3]));
-				break;
-			case CONSTANT_Methodref:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]),
-					   ((((u2)info[2]) << 8) | (u2)info[3]));
-				break;
-			case CONSTANT_InterfaceMethodref:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]),
-					   ((((u2)info[2]) << 8) | (u2)info[3]));
-				break;
-			case CONSTANT_Integer:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s %d\n", cp_info_tag_names[tag],
-					   (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
-						   (((u4)info[2]) << 8) | ((u4)info[3]));
-				break;
-			case CONSTANT_Float:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				{
-					int2float tmp;
-					tmp.i = (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
-							(((u4)info[2]) << 8) | ((u4)info[3]);
-					printf("%-20s %f\n", cp_info_tag_names[tag], tmp.f);
-				}
-				break;
-			case CONSTANT_NameAndType:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]),
-					   ((((u2)info[2]) << 8) | (u2)info[3]));
-				break;
-			case CONSTANT_InvokeDynamic:
-				info = (u1 *)safemalloc(sizeof(u1) * 4);
-				read_n(content, length, idx, info, 4);
-				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
-					   ((((u2)info[0]) << 8) | (u2)info[1]),
-					   ((((u2)info[1]) << 8) | (u2)info[3]));
-				break;
-			case CONSTANT_Long:
-				info = (u1 *)safemalloc(sizeof(u1) * 8);
-				read_n(content, length, idx, info, 8);
-				printf("%-20s %ld\n", cp_info_tag_names[tag],
-					   (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
-						   (((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
-						   (((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
-						   (((u8)info[6]) << 8) | ((u8)info[7]));
-				i++;
-				break;
-			case CONSTANT_Double:
-				info = (u1 *)safemalloc(sizeof(u1) * 8);
-				read_n(content, length, idx, info, 8);
-				{
-					long2double tmp;
-					tmp.i = (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
-							(((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
-							(((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
-							(((u8)info[6]) << 8) | ((u8)info[7]);
-					printf("%-20s %f\n", cp_info_tag_names[tag], tmp.f);
-				}
-				i++;
-				break;
 			case CONSTANT_Utf8: {
 				const u2 utf8_nbytes = read_u2(content, length, idx);
 				printf("%-20s \"", cp_info_tag_names[tag]);
@@ -354,10 +222,99 @@ static void read_constant_pool(const u1 *content, const uint32_t length,
 				}
 				printf("\"\n");
 			} break;
+			case CONSTANT_Integer:
+				info = (u1 *)safemalloc(sizeof(u1) * 4);
+				read_n(content, length, idx, info, 4);
+				printf("%-20s %d\n", cp_info_tag_names[tag],
+					   (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
+						   (((u4)info[2]) << 8) | ((u4)info[3]));
+				break;
+			case CONSTANT_Float:
+				info = (u1 *)safemalloc(sizeof(u1) * 4);
+				read_n(content, length, idx, info, 4);
+				{
+					int2float tmp;
+					tmp.i = (((u4)info[0]) << 24) | (((u4)info[1]) << 16) |
+							(((u4)info[2]) << 8) | ((u4)info[3]);
+					printf("%-20s %f\n", cp_info_tag_names[tag], tmp.f);
+				}
+				break;
+			case CONSTANT_Long:
+				info = (u1 *)safemalloc(sizeof(u1) * 8);
+				read_n(content, length, idx, info, 8);
+				printf("%-20s %ld\n", cp_info_tag_names[tag],
+					   (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
+						   (((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
+						   (((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
+						   (((u8)info[6]) << 8) | ((u8)info[7]));
+				i++;
+				break;
+			case CONSTANT_Double:
+				info = (u1 *)safemalloc(sizeof(u1) * 8);
+				read_n(content, length, idx, info, 8);
+				{
+					long2double tmp;
+					tmp.i = (((u8)info[0]) << 56) | (((u8)info[1]) << 48) |
+							(((u8)info[2]) << 40) | (((u8)info[3]) << 32) |
+							(((u8)info[4]) << 24) | (((u8)info[5]) << 16) |
+							(((u8)info[6]) << 8) | ((u8)info[7]);
+					printf("%-20s %f\n", cp_info_tag_names[tag], tmp.f);
+				}
+				i++;
+				break;
+			case CONSTANT_Class:
+				info = (u1 *)safemalloc(sizeof(u1) * 2);
+				read_n(content, length, idx, info, 2);
+				printf("%-20s #%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]));
+				break;
+			case CONSTANT_String:
+				info = (u1 *)safemalloc(sizeof(u1) * 2);
+				read_n(content, length, idx, info, 2);
+				printf("%-20s #%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]));
+				break;
+			case CONSTANT_Fieldref:
+			case CONSTANT_Methodref:
+			case CONSTANT_InterfaceMethodref:
+				info = (u1 *)safemalloc(sizeof(u1) * 4);
+				read_n(content, length, idx, info, 4);
+				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]),
+					   ((((u2)info[2]) << 8) | (u2)info[3]));
+				break;
+			case CONSTANT_NameAndType:
+				info = (u1 *)safemalloc(sizeof(u1) * 4);
+				read_n(content, length, idx, info, 4);
+				printf("%-20s #%d:#%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]),
+					   ((((u2)info[2]) << 8) | (u2)info[3]));
+				break;
 			case CONSTANT_MethodHandle:
 				info = (u1 *)safemalloc(sizeof(u1) * 3);
 				read_n(content, length, idx, info, 3);
-				printf("%-20s #%d #%d\n", cp_info_tag_names[tag], info[0],
+				printf("%-20s %d #%d\n", cp_info_tag_names[tag], info[0],
+					   ((((u2)info[1]) << 8) | (u2)info[2]));
+				break;
+			case CONSTANT_MethodType:
+				info = (u1 *)safemalloc(sizeof(u1) * 2);
+				read_n(content, length, idx, info, 2);
+				printf("%-20s #%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]));
+				break;
+			case CONSTANT_Dynamic:
+			case CONSTANT_InvokeDynamic:
+				info = (u1 *)safemalloc(sizeof(u1) * 4);
+				read_n(content, length, idx, info, 4);
+				printf("%-20s #%d.#%d\n", cp_info_tag_names[tag],
+					   ((((u2)info[0]) << 8) | (u2)info[1]),
+					   ((((u2)info[1]) << 8) | (u2)info[3]));
+				break;
+			case CONSTANT_Module:
+			case CONSTANT_Package:
+				info = (u1 *)safemalloc(sizeof(u1) * 2);
+				read_n(content, length, idx, info, 2);
+				printf("%-20s #%d\n", cp_info_tag_names[tag],
 					   ((((u2)info[0]) << 8) | (u2)info[1]));
 				break;
 			default:
@@ -376,7 +333,9 @@ static void read_constant_pool(const u1 *content, const uint32_t length,
 static void read_attribute_info(const u1 *content, const uint32_t length,
 								uint32_t *idx, attribute_info *attribute) {
 	attribute->attribute_name_index = read_u2(content, length, idx);
-	attribute->attribute_length		= read_u4(content, length, idx);
+	printf(" - Name #%d\n", attribute->attribute_name_index);
+
+	attribute->attribute_length = read_u4(content, length, idx);
 	attribute->info =
 		(u1 *)safemalloc(attribute->attribute_length * sizeof(u1));
 	read_n(content, length, idx, attribute->info, attribute->attribute_length);
@@ -385,16 +344,31 @@ static void read_attribute_info(const u1 *content, const uint32_t length,
 // QUESTION: should this be returning void?
 static void read_field_info(const u1 *content, const uint32_t length,
 							uint32_t *idx, field_info *field) {
-	field->access_flags		= (access_flag)read_u2(content, length, idx);
-	field->name_index		= read_u2(content, length, idx);
+	field->access_flags = (access_flag)read_u2(content, length, idx);
+
+	for (u2 i = 0; i < 8 * sizeof(u2); i++) {
+		if (field->access_flags & (1 << i)) {
+			printf(" %s",
+				   get_field_access_flag_name(field->access_flags & (1 << i)));
+		}
+	}
+
+	field->name_index = read_u2(content, length, idx);
+	printf(" name:#%d", field->name_index);
+
 	field->descriptor_index = read_u2(content, length, idx);
+	printf(" descriptor:#%d\n", field->descriptor_index);
+
 	field->attributes_count = read_u2(content, length, idx);
 	field->attributes = (attribute_info *)safemalloc(field->attributes_count *
 													 sizeof(attribute_info));
-
+	printf("\n%d attributes\n", field->attributes_count);
+	printf("Attributes\n");
 	for (u2 i = 0; i < field->attributes_count; i++) {
+		printf(" - Attr. %d\n", i);
 		read_attribute_info(content, length, idx, &field->attributes[i]);
 	}
+	printf("\n");
 }
 
 // QUESTION: should this be returning void?
@@ -435,50 +409,67 @@ static class_file *parse_class_file(const u1 *content, const uint32_t length) {
 	cp_info *constant_pool =
 		(cp_info *)safemalloc((constant_pool_count - 1) * sizeof(cp_info));
 
-	printf("Constant pool\n");
+	printf("\nConstant pool\n");
 	read_constant_pool(content, length, &idx, constant_pool,
 					   constant_pool_count);
 	printf("\n");
 
-	const u2 access_flags	  = read_u2(content, length, &idx);
-	const u2 this_class		  = read_u2(content, length, &idx);
-	const u2 super_class	  = read_u2(content, length, &idx);
+	const u2 access_flags = read_u2(content, length, &idx);
+	printf("Access flags : 0x%04X", access_flags);
+	for (u2 i = 0; i < 8 * sizeof(u2); i++) {
+		if (access_flags & (1 << i)) {
+			printf(" %s", get_class_access_flag_name(access_flags & (1 << i)));
+		}
+	}
+	printf("\n");
+
+	const u2 this_class = read_u2(content, length, &idx);
+	printf("this_class  : #%d\n", this_class);
+
+	const u2 super_class = read_u2(content, length, &idx);
+	printf("super_class : #%d\n", super_class);
+
 	const u2 interfaces_count = read_u2(content, length, &idx);
 	u2 *interfaces			  = (u2 *)safemalloc(interfaces_count * sizeof(u2));
-
+	printf("\n%d interfaces\n", interfaces_count);
+	printf("Interfaces\n");
 	for (u2 i = 0; i < interfaces_count; i++) {
 		interfaces[i] = read_u2(content, length, &idx);
+		printf(" %d : #%d\n", i, interfaces[i]);
 	}
+	printf("\n");
 
 	const u2 fields_count = read_u2(content, length, &idx);
 	field_info *fields =
 		(field_info *)safemalloc(fields_count * sizeof(field_info));
-
+	printf("%d fields\n", fields_count);
+	printf("Fields\n");
 	for (u2 i = 0; i < fields_count; i++) {
+		printf(" %d : ", i);
 		read_field_info(content, length, &idx, &fields[i]);
+		printf("\n");
 	}
+	printf("\n");
 
 	const u2 methods_count = read_u2(content, length, &idx);
 	method_info *methods =
 		(method_info *)safemalloc(methods_count * sizeof(method_info));
-
+	printf("%d methods\n", methods_count);
+	printf("Methods\n");
 	for (u2 i = 0; i < methods_count; i++) {
 		read_method_info(content, length, &idx, &methods[i]);
 	}
+	printf("\n");
 
 	const u2 attributes_count = read_u2(content, length, &idx);
 	attribute_info *attributes =
 		(attribute_info *)safemalloc(attributes_count * sizeof(attribute_info));
-
+	printf("%d attributes\n", attributes_count);
+	printf("Attributes\n");
 	for (u2 i = 0; i < attributes_count; i++) {
 		read_attribute_info(content, length, &idx, &attributes[i]);
 	}
-
-	printf("Access flags : 0x%04X\n", access_flags);
-	printf("%d interfaces\n", interfaces_count);
-	printf("%d fields\n", fields_count);
-	printf("%d methods\n", methods_count);
-	printf("%d attributes\n", attributes_count);
+	printf("\n");
 
 	class_file *cf = (class_file *)safemalloc(sizeof(class_file));
 
