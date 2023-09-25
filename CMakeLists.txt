@@ -4,7 +4,7 @@ project(java2c VERSION 0.1.0)
 enable_language(C)
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE STRING "Release")
+    set(CMAKE_BUILD_TYPE "Release")
 endif()
 
 set(CMAKE_C_FLAGS "-std=c99 -Wall -Wextra -Werror -Wpedantic ${CMAKE_C_FLAGS}")
