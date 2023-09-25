@@ -19,11 +19,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
     set(CMAKE_C_FLAGS_MINSIZEREL "-Os -DNDEBUG -march=native -mtune=native -s -static")
 endif()
 
-set(HEADERS "include/class_file_parser.h")
-
-set(SRC_FILES "src/main.c")
-
-add_executable(main ${SRC_FILES})
+add_executable(main src/main.c src/utils.c src/input.c)
 target_include_directories(main PRIVATE "include")
 
 message(STATUS "")
